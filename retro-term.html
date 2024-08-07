@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>retro term</title>
+    <style>
+        body { margin: 0; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.7/dat.gui.min.js"></script>
+    <script>
+        let scene, camera, renderer, screen, material;
+        let text = "READY.\n>";
+
+        const params = {
+            bloomIntensity: 0.5,
+            burnInIntensity: 0.2,
+            noiseIntensity: 0.01,
+            jitterAmount: 0.001,
+            glowLineIntensity: 0.01,
+            curvature: 0.05,
+            ambientLight: 0.2,
+            flickeringIntensity: 0.05,
+            horizontalSyncIntensity: 0.1,
+            rgbShiftAmount: 0.002,
+            scanlineIntensity: 0.1,
+            chromaticAberration: 0.003,
+        };
+        const mainVertexShader = `
+                varying vec2 vUv;
+                uniform float time;
+                uniform float flickeringIntensity;
+                uniform float horizontalSyncIntensity;
+                
+                float rand(vec2 co) {
+                    return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
+                }
+                
+                void main() {
+                    vUv = uv;
+                    vec4 modelPosition = modelMatrix * vec4(position, 1.0);
+                    
+                    // Flickering
+                    float flicker = 1.0 + flickeringIntensity * (rand(vec2(time * 0.1, 0.0)) - 0.5);
+                    modelPosition.y *= flicker;
+                    
+                    // Horizontal sync
+                    float distortion = sin((modelPosition.y + time * 0.1) * 10.0) * horizontalSyncIntensity * 0.1;
+                    modelPosition.x += distortion;
+                    
+                    vec4 viewPosition = viewMatrix * modelPosition;
+                    gl_Position = projectionMatrix * viewPosition;
+                }
+            `;
+            // Burn-in shader
+            const burnInFragmentShader = `
+                uniform float time;
+                varying vec2 vUv;
+
+                float rand(vec2 co) {
+                    return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
+                }
+
+                void main() {
+                    vec2 uv = vUv;
+                    float value = step(0.5, rand(floor(uv * 50.0 + time * 0.1)));
+                    gl_FragColor = vec4(vec3(value), 1.0);
+                }
+            `;
+
+            // Bloom shader
+            const bloomFragmentShader = `
+                uniform sampler2D tDiffuse;
+                varying vec2 vUv;
+
+                void main() {
+                    vec4 color = texture2D(tDiffuse, vUv);
+                    vec3 luminance = vec3(0.299, 0.587, 0.114);
+                    float lum = dot(color.rgb, luminance);
+                    gl_FragColor = vec4(color.rgb * smoothstep(0.7, 0.8, lum), 1.0);
+                }
+            `;
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            const geometry = new THREE.PlaneGeometry(16, 9);
+            material = new THREE.ShaderMaterial({
+                uniforms: {
+                    time: { value: 0 },
+                    resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+                    text: { value: null },
+                    bloomIntensity: { value: params.bloomIntensity },
+                    burnInIntensity: { value: params.burnInIntensity },
+                    noiseIntensity: { value: params.noiseIntensity },
+                    jitterAmount: { value: params.jitterAmount },
+                    glowLineIntensity: { value: params.glowLineIntensity },
+                    curvature: { value: params.curvature },
+                    ambientLight: { value: params.ambientLight },
+                    flickeringIntensity: { value: params.flickeringIntensity },
+                    horizontalSyncIntensity: { value: params.horizontalSyncIntensity },
+                    rgbShiftAmount: { value: params.rgbShiftAmount },
+                    scanlineIntensity: { value: params.scanlineIntensity },
+                    chromaticAberration: { value: params.chromaticAberration },
+                },
+                vertexShader: mainVertexShader,
+                fragmentShader: `
+                    uniform float time;
+                    uniform vec2 resolution;
+                    uniform float bloomIntensity;
+                    uniform float burnInIntensity;
+                    uniform float noiseIntensity;
+                    uniform float jitterAmount;
+                    uniform float glowLineIntensity;
+                    uniform float curvature;
+                    uniform float ambientLight;
+                    uniform float flickeringIntensity;
+                    uniform float horizontalSyncIntensity;
+                    uniform float rgbShiftAmount;
+                    uniform float scanlineIntensity;
+                    uniform float chromaticAberration;
+                    uniform sampler2D text;
+                    varying vec2 vUv;
+                    uniform sampler2D burnInTexture;
+                    uniform sampler2D bloomTexture;
+                    
+                    float random(vec2 st) {
+                        return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
+                    }
+
+                    void main() {
+                        vec2 uv = vUv;
+                        vec2 cc = vec2(0.5) - uv;
+                        float distance = length(cc);
+
+                        // curvature
+                        uv = uv * 2.0 - 1.0;
+                        uv *= 1.0 + curvature * dot(uv, uv);
+                        uv = (uv + 1.0) / 2.0;
+                        
+                        // Jitter
+                        vec2 jitterOffset = vec2(random(uv + time * 0.001), random(uv + time * 0.002)) - 0.5;
+                        uv += jitterOffset * jitterAmount;           
+
+                        // RGB SHIFT
+                        float r = texture2D(text, uv + vec2(chromaticAberration, 0.0)).r;
+                        float g = texture2D(text, uv).g;
+                        float b = texture2D(text, uv - vec2(chromaticAberration, 0.0)).b;
+                        vec3 color = vec3(r, g, b);
+                        
+                        // 噪声
+                        float noise = random(uv + time) * noiseIntensity;
+                        color += noise;
+                        
+                        // Bloom
+                        color += bloomIntensity * pow(color, vec3(2.0));
+                        
+                        // Burn-in
+                        // color *= 1.0 - burnInIntensity * (1.0 - texture2D(text, uv).a);
+
+                        vec3 burnInColor = texture2D(burnInTexture, uv).rgb;
+                        color = mix(color, burnInColor, burnInIntensity);
+
+
+                        // Glow Line
+                        float glow = sin(uv.y * 400.0 + time * 5.0) * 0.5 + 0.5;
+                        color += glow * glowLineIntensity;
+                        
+                        // Scan Line
+                        float scanline = sin(uv.y * 800.0) * 0.5 + 0.5;
+                        color *= 1.0 - scanlineIntensity * (1.0 - scanline);
+                        
+                        // Ambient Light
+                        color += ambientLight;
+                        
+                        // Flickering
+                        float flicker = 1.0 + flickeringIntensity * (random(vec2(time * 10.0, 0.0)) - 0.5);
+                        color *= flicker;                        
+                        
+                        // Horizontal Sync
+                        // color *= 1.0 - horizontalSyncIntensity * step(0.99, fract(uv.y * 100.0 + time));
+                        uv.x += sin(uv.y * 100.0 + time * 5.0) * horizontalSyncIntensity * 0.01;
+
+                        
+                        gl_FragColor = vec4(color, 1.0);
+                    }
+                `
+            });
+            burnInMaterial = new THREE.ShaderMaterial({
+                uniforms: {
+                    time: { value: 0 }
+                },
+                vertexShader: mainVertexShader,
+                fragmentShader: burnInFragmentShader
+            });
+
+            bloomMaterial = new THREE.ShaderMaterial({
+                uniforms: {
+                    tDiffuse: { value: null }
+                },
+                vertexShader: mainVertexShader,
+                fragmentShader: bloomFragmentShader
+            });
+
+            screen = new THREE.Mesh(geometry, material);
+            scene.add(screen);
+
+            burnInRenderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight);
+            bloomRenderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight);
+
+            camera.position.z = 10;
+
+            const gui = new dat.GUI();
+            gui.add(params, 'bloomIntensity', 0, 1);
+            gui.add(params, 'burnInIntensity', 0, 1);
+            gui.add(params, 'noiseIntensity', 0, 1);
+            gui.add(params, 'jitterAmount', 0, 0.01);
+            gui.add(params, 'glowLineIntensity', 0, 1);
+            gui.add(params, 'curvature', 0, 0.5);
+            gui.add(params, 'ambientLight', 0, 1);
+            gui.add(params, 'flickeringIntensity', 0, 0.2);
+            gui.add(params, 'horizontalSyncIntensity', 0, 0.5);
+            gui.add(params, 'rgbShiftAmount', 0, 0.01);
+            gui.add(params, 'scanlineIntensity', 0, 0.5);
+            gui.add(params, 'chromaticAberration', 0, 0.01);
+            gui.domElement.addEventListener('keydown', function(e) {
+                e.stopPropagation();
+            }, false);
+            document.addEventListener('keydown', onKeyDown);
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function onKeyDown(event) {
+            if (document.activeElement === document.body) {
+                if (event.key === 'Enter') {
+                    text += '\n>';
+                } else if (event.key === 'Backspace') {
+                    text = text.slice(0, -1);
+                } else if (event.key.length === 1) {
+                    text += event.key;
+                }
+                updateTextTexture();
+            }
+        }
+
+        function updateTextTexture() {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 1024;
+            canvas.height = 1024;
+            ctx.fillStyle = '#33ff33'; 
+            ctx.font = '24px VT323, monospace';
+            const lines = text.split('\n');
+            lines.forEach((line, index) => {
+                ctx.fillText(line, 10, 30 + index * 30);
+            });
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.minFilter = THREE.LinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            material.uniforms.text.value = texture;
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            material.uniforms.resolution.value.set(window.innerWidth, window.innerHeight);
+            burnInRenderTarget.setSize(window.innerWidth, window.innerHeight);
+            bloomRenderTarget.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            material.uniforms.time.value += 0.01;
+            material.uniforms.bloomIntensity.value = params.bloomIntensity;
+            material.uniforms.burnInIntensity.value = params.burnInIntensity;
+            material.uniforms.noiseIntensity.value = params.noiseIntensity;
+            material.uniforms.jitterAmount.value = params.jitterAmount;
+            material.uniforms.glowLineIntensity.value = params.glowLineIntensity;
+            material.uniforms.curvature.value = params.curvature;
+            material.uniforms.ambientLight.value = params.ambientLight;
+            material.uniforms.flickeringIntensity.value = params.flickeringIntensity;
+            material.uniforms.horizontalSyncIntensity.value = params.horizontalSyncIntensity;
+            material.uniforms.rgbShiftAmount.value = params.rgbShiftAmount;
+            material.uniforms.scanlineIntensity.value = params.scanlineIntensity;
+            material.uniforms.chromaticAberration.value = params.chromaticAberration;
+
+            burnInMaterial.uniforms.time.value += 0.01;
+            renderer.render(scene, camera);
+
+            //TODO: Implement burn-in and bloom effect
+            // // Render burn-in effect
+            // renderer.setRenderTarget(burnInRenderTarget);
+            // renderer.render(scene, camera);
+
+            // // Render bloom effect
+            // bloomMaterial.uniforms.tDiffuse.value = burnInRenderTarget.texture;
+            // renderer.setRenderTarget(bloomRenderTarget);
+            // renderer.render(scene, camera);
+
+            // Final render
+            // material.uniforms.burnInTexture.value = burnInRenderTarget.texture;
+            // material.uniforms.bloomTexture.value = bloomRenderTarget.texture;
+
+        }
+
+        init();
+        updateTextTexture();
+        animate();
+    </script>
+</body>
+</html>
