@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>retro term</title>
+    <title>复古控制台</title>
     <style>
         body { margin: 0; }
         canvas { display: block; }
@@ -21,14 +21,17 @@
             burnInIntensity: 0.2,
             noiseIntensity: 0.01,
             jitterAmount: 0.001,
-            glowLineIntensity: 0.01,
+            glowLineIntensity: 0.2,
+            brightness: 1.0,
             curvature: 0.05,
             ambientLight: 0.2,
-            flickeringIntensity: 0.05,
+            flickeringIntensity: 0.005,
             horizontalSyncIntensity: 0.1,
             rgbShiftAmount: 0.002,
             scanlineIntensity: 0.1,
             chromaticAberration: 0.003,
+            fontColor: '#33ff33',
+            backgroundColor: '#000000'
         };
         const mainVertexShader = `
                 varying vec2 vUv;
@@ -108,7 +111,11 @@
                     horizontalSyncIntensity: { value: params.horizontalSyncIntensity },
                     rgbShiftAmount: { value: params.rgbShiftAmount },
                     scanlineIntensity: { value: params.scanlineIntensity },
-                    chromaticAberration: { value: params.chromaticAberration },
+                    brightness: { value: params.brightness },
+                    fontColor: { value: new THREE.Color(params.fontColor) },
+                    backgroundColor: { value: new THREE.Color(params.backgroundColor) },
+                    burnInTexture: { value: null },
+                    bloomTexture: { value: null }
                 },
                 vertexShader: mainVertexShader,
                 fragmentShader: `
@@ -125,12 +132,14 @@
                     uniform float horizontalSyncIntensity;
                     uniform float rgbShiftAmount;
                     uniform float scanlineIntensity;
-                    uniform float chromaticAberration;
                     uniform sampler2D text;
                     varying vec2 vUv;
                     uniform sampler2D burnInTexture;
                     uniform sampler2D bloomTexture;
-                    
+                    uniform vec3 fontColor;
+                    uniform vec3 backgroundColor;
+                                    uniform float brightness;
+
                     float random(vec2 st) {
                         return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
                     }
@@ -140,19 +149,26 @@
                         vec2 cc = vec2(0.5) - uv;
                         float distance = length(cc);
 
-                        // curvature
+                       // Screen curvature
                         uv = uv * 2.0 - 1.0;
                         uv *= 1.0 + curvature * dot(uv, uv);
                         uv = (uv + 1.0) / 2.0;
                         
                         // Jitter
-                        vec2 jitterOffset = vec2(random(uv + time * 0.001), random(uv + time * 0.002)) - 0.5;
-                        uv += jitterOffset * jitterAmount;           
+                    vec2 jitterOffset = vec2(random(uv + time * 0.01), random(uv + time * 0.02)) - 0.5;
+                    uv += jitterOffset * jitterAmount * 0.1;     
 
-                        // RGB SHIFT
-                        float r = texture2D(text, uv + vec2(chromaticAberration, 0.0)).r;
+                         // RGB shift
+
+                        // float r1 = texture2D(text, uv).r;
+                        // float g1 = texture2D(text, uv).g;
+                        // float b1 = texture2D(text, uv).b;
+                        // vec3 color = vec3(r1, g1, b1);
+
+                        float r = texture2D(text, uv + vec2(rgbShiftAmount, 0.0)).r;
                         float g = texture2D(text, uv).g;
-                        float b = texture2D(text, uv - vec2(chromaticAberration, 0.0)).b;
+                        float b = texture2D(text, uv - vec2(rgbShiftAmount, 0.0)).b;
+                        
                         vec3 color = vec3(r, g, b);
                         
                         // 噪声
@@ -170,10 +186,10 @@
 
 
                         // Glow Line
-                        float glow = sin(uv.y * 400.0 + time * 5.0) * 0.5 + 0.5;
-                        color += glow * glowLineIntensity;
+                        float line = step(0.98, sin(uv.y * 400.0 + time * 5.0));
+                        color += fontColor * line * glowLineIntensity;
                         
-                        // Scan Line
+                        // 扫描线
                         float scanline = sin(uv.y * 800.0) * 0.5 + 0.5;
                         color *= 1.0 - scanlineIntensity * (1.0 - scanline);
                         
@@ -187,7 +203,13 @@
                         // Horizontal Sync
                         // color *= 1.0 - horizontalSyncIntensity * step(0.99, fract(uv.y * 100.0 + time));
                         uv.x += sin(uv.y * 100.0 + time * 5.0) * horizontalSyncIntensity * 0.01;
-
+                        
+                        // Final color mix
+                        color = mix(backgroundColor, fontColor * color, color.r);
+                        
+                        // Brightness
+                        color *= brightness;
+                    
                         
                         gl_FragColor = vec4(color, 1.0);
                     }
@@ -218,18 +240,21 @@
             camera.position.z = 10;
 
             const gui = new dat.GUI();
-            gui.add(params, 'bloomIntensity', 0, 1);
+            gui.add(params, 'bloomIntensity', 0, 5);
             gui.add(params, 'burnInIntensity', 0, 1);
             gui.add(params, 'noiseIntensity', 0, 1);
-            gui.add(params, 'jitterAmount', 0, 0.01);
+            gui.add(params, 'jitterAmount', 0, 0.02);
             gui.add(params, 'glowLineIntensity', 0, 1);
             gui.add(params, 'curvature', 0, 0.5);
             gui.add(params, 'ambientLight', 0, 1);
-            gui.add(params, 'flickeringIntensity', 0, 0.2);
+            gui.add(params, 'flickeringIntensity', 0, 0.01);
             gui.add(params, 'horizontalSyncIntensity', 0, 0.5);
             gui.add(params, 'rgbShiftAmount', 0, 0.01);
             gui.add(params, 'scanlineIntensity', 0, 0.5);
-            gui.add(params, 'chromaticAberration', 0, 0.01);
+            gui.add(params, 'brightness', 0, 2);
+            gui.addColor(params, 'fontColor').onChange(value => material.uniforms.fontColor.value.setHex(parseInt(value.replace('#', '0x'))));
+            gui.addColor(params, 'backgroundColor').onChange(value => material.uniforms.backgroundColor.value.setHex(parseInt(value.replace('#', '0x'))));
+
             gui.domElement.addEventListener('keydown', function(e) {
                 e.stopPropagation();
             }, false);
@@ -255,7 +280,7 @@
             const ctx = canvas.getContext('2d');
             canvas.width = 1024;
             canvas.height = 1024;
-            ctx.fillStyle = '#33ff33'; 
+            ctx.fillStyle = '#33ff33';  // 复古绿色
             ctx.font = '24px VT323, monospace';
             const lines = text.split('\n');
             lines.forEach((line, index) => {
@@ -279,7 +304,9 @@
         function animate() {
             requestAnimationFrame(animate);
 
-            material.uniforms.time.value += 0.01;
+            const time = performance.now() * 0.001;
+            material.uniforms.time.value = time;
+            
             material.uniforms.bloomIntensity.value = params.bloomIntensity;
             material.uniforms.burnInIntensity.value = params.burnInIntensity;
             material.uniforms.noiseIntensity.value = params.noiseIntensity;
@@ -291,24 +318,25 @@
             material.uniforms.horizontalSyncIntensity.value = params.horizontalSyncIntensity;
             material.uniforms.rgbShiftAmount.value = params.rgbShiftAmount;
             material.uniforms.scanlineIntensity.value = params.scanlineIntensity;
-            material.uniforms.chromaticAberration.value = params.chromaticAberration;
+            material.uniforms.brightness.value = params.brightness;
 
-            burnInMaterial.uniforms.time.value += 0.01;
+            burnInMaterial.uniforms.time.value = time;
+
+            // Render burn-in effect
+            renderer.setRenderTarget(burnInRenderTarget);
             renderer.render(scene, camera);
 
-            //TODO: Implement burn-in and bloom effect
-            // // Render burn-in effect
-            // renderer.setRenderTarget(burnInRenderTarget);
-            // renderer.render(scene, camera);
-
-            // // Render bloom effect
-            // bloomMaterial.uniforms.tDiffuse.value = burnInRenderTarget.texture;
-            // renderer.setRenderTarget(bloomRenderTarget);
-            // renderer.render(scene, camera);
+            // Render bloom effect
+            bloomMaterial.uniforms.tDiffuse.value = burnInRenderTarget.texture;
+            renderer.setRenderTarget(bloomRenderTarget);
+            renderer.render(scene, camera);
 
             // Final render
-            // material.uniforms.burnInTexture.value = burnInRenderTarget.texture;
-            // material.uniforms.bloomTexture.value = bloomRenderTarget.texture;
+            material.uniforms.burnInTexture.value = burnInMaterial.texture;
+            material.uniforms.bloomTexture.value = bloomMaterial.texture;
+            renderer.setRenderTarget(null);
+
+            renderer.render(scene, camera);
 
         }
 
